@@ -1,95 +1,126 @@
 import os
-from pptx import Presentation
-from pptx.util import Inches, Pt
-from typing import Dict, Any, List, Optional
 import logging
+from pptx import Presentation
+from pptx.util import Inches
+from typing import Dict, Any, List, Optional
 
 class PPTGenerator:
     """
-    Handles PowerPoint generation using a master template.
+    Handles PowerPoint generation with template support and defensive logic.
     """
     def __init__(self, template_path: Optional[str] = None):
-        if template_path and os.path.exists(template_path):
-            self.prs = Presentation(template_path)
-        else:
-            self.prs = Presentation()
-            logging.warning("Template not found or not provided. Using default layout.")
+        self.logger = logging.getLogger(__name__)
+        self.prs = self._initialize_presentation(template_path)
 
-    def _get_layout_by_name(self, name: str):
+    def _initialize_presentation(self, path: Optional[str]) -> Presentation:
         """
-        Tries to find a slide layout by name, defaults to index 1 if not found.
+        Self-Correction: If template path is invalid or file is corrupted,
+        fall back to a blank presentation instead of crashing.
         """
+        if path and os.path.exists(path):
+            try:
+                return Presentation(path)
+            except Exception as e:
+                self.logger.error(f"Template yüklenemedi, varsayılan sunum kullanılıyor: {e}")
+                return Presentation()
+        return Presentation()
+
+    def _get_safe_layout(self, hint: str):
+        """
+        Self-Correction: If requested layout doesn't exist, search for keywords
+        or return the most common 'Title and Content' layout (index 1).
+        """
+        hint_lower = hint.lower()
+        # Search for keyword matches in layout names
         for layout in self.prs.slide_layouts:
-            if name.lower() in layout.name.lower():
+            if hint_lower in layout.name.lower():
                 return layout
-        return self.prs.slide_layouts[1] # Default to Title and Content
 
-    def create_presentation(self, structure: Dict[str, Any], images: List[str], output_path: str):
+        # Fallback logic
+        try:
+            return self.prs.slide_layouts[1] # Usually 'Title and Content'
+        except IndexError:
+            return self.prs.slide_layouts[0] # Total fallback to first layout
+
+    def create_presentation(self, structure: Dict[str, Any], image_paths: List[str], output_path: str) -> str:
         """
-        Creates a .pptx file based on the provided structure and images.
+        Builds the presentation based on AI-generated structure.
         """
-        # If there's a title slide in structure
-        title_text = structure.get("presentation_title", "Yeni Sunum")
+        try:
+            slides_data = structure.get("slides", [])
 
-        for slide_data in structure.get("slides", []):
-            layout_name = slide_data.get("layout", "Title and Content")
-            layout = self._get_layout_by_name(layout_name)
-            slide = self.prs.slides.add_slide(layout)
+            for slide_item in slides_data:
+                layout_hint = slide_item.get("layout_hint", "Title and Content")
+                layout = self._get_safe_layout(layout_hint)
+                slide = self.prs.slides.add_slide(layout)
 
-            # Set Title
-            title_placeholder = slide.shapes.title
-            if title_placeholder:
-                title_placeholder.text = slide_data.get("title", "")
+                # Title
+                title_shape = slide.shapes.title
+                if title_shape:
+                    title_shape.text = slide_item.get("title", "Başlıksız Slayt")
 
-            # Set Content (Bullet points)
-            body_placeholder = None
-            for shape in slide.placeholders:
-                if shape.placeholder_format.type == 2: # Body/Object placeholder
-                    body_placeholder = shape
-                    break
+                # Content
+                self._add_text_content(slide, slide_item.get("content", []))
 
-            if body_placeholder:
-                tf = body_placeholder.text_frame
-                content = slide_data.get("content", [])
-                if isinstance(content, list):
-                    for i, line in enumerate(content):
-                        if i == 0:
-                            tf.text = line
-                        else:
-                            p = tf.add_paragraph()
-                            p.text = line
-                            p.level = 0
-                else:
-                    tf.text = str(content)
+                # Image Handling
+                img_idx = slide_item.get("image_index")
+                if img_idx is not None and 0 <= img_idx < len(image_paths):
+                    self._add_image_safely(slide, image_paths[img_idx])
 
-            # Add Image if specified
-            img_index = slide_data.get("image_index")
-            if img_index is not None and 0 <= img_index < len(images):
-                img_path = images[img_index]
-                self._add_image_to_slide(slide, img_path)
+            self.prs.save(output_path)
+            return output_path
+        except Exception as e:
+            self.logger.error(f"PPTX üretim hatası: {e}")
+            raise Exception(f"Sunum dosyası oluşturulamadı: {str(e)}")
 
-        self.prs.save(output_path)
-        return output_path
-
-    def _add_image_to_slide(self, slide, img_path):
+    def _add_text_content(self, slide, content: Any):
         """
-        Adds an image to a slide. Tries to find a picture placeholder,
-        otherwise places it in a default position.
+        Handles various content formats (string or list).
         """
-        # Try to find a picture placeholder
+        body_placeholder = None
+        for shape in slide.placeholders:
+            if shape.placeholder_format.type == 2: # Body
+                body_placeholder = shape
+                break
+
+        if body_placeholder:
+            tf = body_placeholder.text_frame
+            if isinstance(content, list):
+                for i, point in enumerate(content):
+                    p = tf.add_paragraph() if i > 0 else tf.paragraphs[0]
+                    p.text = str(point)
+                    p.level = 0
+            else:
+                tf.text = str(content)
+
+    def _add_image_safely(self, slide, img_path: str):
+        """
+        Self-Correction: Validate image exists, handle scaling to prevent
+        images from covering the entire slide or going off-bounds.
+        """
+        if not os.path.exists(img_path):
+            self.logger.warning(f"Görsel bulunamadı, atlanıyor: {img_path}")
+            return
+
+        # Attempt to find a picture placeholder first
         placeholder = None
         for shape in slide.placeholders:
-            if "picture" in shape.name.lower() or shape.placeholder_format.type == 18: # Picture placeholder
+            if shape.placeholder_format.type == 18: # Picture placeholder
                 placeholder = shape
                 break
 
         if placeholder:
-            # Replace placeholder with image
-            placeholder.insert_picture(img_path)
-        else:
-            # Add image to a default position (e.g., right side or bottom)
-            # This is a fallback
-            left = Inches(5)
+            try:
+                placeholder.insert_picture(img_path)
+                return
+            except Exception:
+                pass # Fallback to manual placement if placeholder fails
+
+        # Manual placement fallback (Right side, scaled)
+        try:
+            left = Inches(6)
             top = Inches(2)
-            width = Inches(4)
+            width = Inches(3.5)
             slide.shapes.add_picture(img_path, left, top, width=width)
+        except Exception as e:
+            self.logger.error(f"Resim ekleme hatası: {e}")

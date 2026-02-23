@@ -1,145 +1,156 @@
 import streamlit as st
 import os
 import time
-try:
-    from src.ai_engine import AIEngine
-except ImportError:
-    AIEngine = None
+import shutil
 from src.mock_ai_engine import MockAIEngine
 from src.ppt_generator import PPTGenerator
 from src.utils import setup_logger
 
-# Page Config
-st.set_page_config(page_title="AI Sunum Hazırlayıcı", layout="wide")
+# Self-Correction: Handle AIEngine import failure (e.g. llama-cpp not installed)
+try:
+    from src.ai_engine import AIEngine
+except ImportError:
+    AIEngine = None
 
-# Setup Logger
+# App Configuration
+st.set_page_config(page_title="AI Sunum Hazırlayıcı", layout="wide", page_icon="🚀")
 logger = setup_logger()
 
-# Session State Initialization
-if "generated_file" not in st.session_state:
-    st.session_state.generated_file = None
+# Constants
+UPLOAD_DIR = "uploads"
+OUTPUT_DIR = "output"
+TEMPLATE_DIR = "templates"
+
+def init_folders():
+    for folder in [UPLOAD_DIR, OUTPUT_DIR, TEMPLATE_DIR, "logs"]:
+        os.makedirs(folder, exist_ok=True)
+
+def cleanup_uploads():
+    """Self-Correction: Prevent disk bloat by cleaning old uploads."""
+    if os.path.exists(UPLOAD_DIR):
+        shutil.rmtree(UPLOAD_DIR)
+        os.makedirs(UPLOAD_DIR)
 
 def main():
+    init_folders()
+
     st.title("🚀 Yerel AI Sunum Hazırlayıcı")
-    st.markdown("""
-    Bu uygulama, yerel LLM/VLM modellerini kullanarak metin ve görsellerinizden otomatik sunum hazırlar.
-    Tamamen çevrimdışı çalışır ve verileriniz bilgisayarınızda kalır.
-    """)
+    st.info("Bu uygulama tamamen çevrimdışı çalışır. Verileriniz cihazınızdan dışarı çıkmaz.")
 
-    # Sidebar - Settings
-    st.sidebar.header("⚙️ Ayarlar")
-    mock_mode = st.sidebar.checkbox("Mock Mode (Model olmadan test et)", value=False)
+    # Sidebar - Settings & Hardware
+    with st.sidebar:
+        st.header("⚙️ Sistem Ayarları")
+        mock_mode = st.checkbox("Mock Mode (Model olmadan test)", value=False)
 
-    model_path = st.sidebar.text_input("GGUF Model Yolu", value="models/phi-3.5-vision-instruct.Q4_K_M.gguf")
-    mmproj_path = st.sidebar.text_input("MMProject (CLIP) Yolu", value="models/phi-3.5-vision-instruct-mmproj.bin")
+        st.subheader("Modeller")
+        model_path = st.text_input("GGUF Model Yolu", "models/phi-3.5-vision-instruct.Q4_K_M.gguf")
+        mmproj_path = st.text_input("Vision Projector Yolu", "models/phi-3.5-vision-instruct-mmproj.bin")
 
-    st.sidebar.divider()
+        st.divider()
+        st.write(f"💻 CPU Çekirdek Sayısı: {os.cpu_count()}")
+        if st.button("🗑️ Geçici Dosyaları Temizle"):
+            cleanup_uploads()
+            st.success("Temizlendi.")
 
-    # Template Upload
-    st.subheader("1. Şablon ve İçerik")
-    col1, col2 = st.columns(2)
+    # Main UI Layout
+    col1, col2 = st.columns([1, 1])
 
     with col1:
-        template_file = st.file_uploader("Kurumsal PPTX Şablonu Yükle (Opsiyonel)", type=["pptx"])
-        if template_file:
-            with open(os.path.join("templates", "master_template.pptx"), "wb") as f:
-                f.write(template_file.getbuffer())
-            st.success("Şablon yüklendi.")
+        st.subheader("1. İçerik ve Şablon")
+        template_file = st.file_uploader("Kurumsal Şablon (.pptx)", type=["pptx"])
+        content_file = st.file_uploader("Metin/Markdown İçeriği (.txt, .md)", type=["txt", "md"])
 
-    with col2:
-        content_file = st.file_uploader("Metin veya Markdown Dosyası Yükle", type=["txt", "md"])
         content_text = ""
         if content_file:
             content_text = content_file.read().decode("utf-8")
-            st.text_area("İçerik Önizleme", content_text[:500] + "...", height=150)
+            st.text_area("İçerik Önizleme", content_text[:300] + "...", height=100)
 
-    # Image Upload
-    st.subheader("2. Görseller")
-    image_files = st.file_uploader("Sunuma eklenecek görselleri seçin", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
+    with col2:
+        st.subheader("2. Görseller")
+        image_files = st.file_uploader("Görselleri Seçin", type=["jpg", "png", "jpeg"], accept_multiple_files=True)
 
-    uploaded_image_paths = []
-    if image_files:
-        cols = st.columns(len(image_files) if len(image_files) < 5 else 5)
-        for i, img_file in enumerate(image_files):
-            img_path = os.path.join("uploads", img_file.name)
-            with open(img_path, "wb") as f:
-                f.write(img_file.getbuffer())
-            uploaded_image_paths.append(img_path)
+        image_paths = []
+        if image_files:
+            for img_file in image_files:
+                path = os.path.join(UPLOAD_DIR, img_file.name)
+                with open(path, "wb") as f:
+                    f.write(img_file.getbuffer())
+                image_paths.append(path)
+            st.write(f"{len(image_paths)} görsel yüklendi.")
 
-            # Preview
-            with cols[i % 5]:
-                st.image(img_path, caption=img_file.name, use_container_width=True)
-
-    # Generation
     st.divider()
+
+    # Generation Logic
     if st.button("✨ Sunumu Oluştur", type="primary", use_container_width=True):
         if not content_text:
-            st.error("Lütfen bir metin içeriği yükleyin.")
+            st.warning("Lütfen önce bir içerik metni yükleyin.")
             return
 
         try:
-            with st.status("Sunum hazırlanıyor...", expanded=True) as status:
-                # 1. Initialize Engine
-                st.write("🤖 AI Modeli yükleniyor...")
+            with st.status("İşlem başlatılıyor...", expanded=True) as status:
+                # Engine Selection
                 if mock_mode:
+                    status.update(label="Mock Engine kullanılıyor...")
                     engine = MockAIEngine()
                 else:
                     if AIEngine is None:
-                        st.error("llama-cpp-python kütüphanesi yüklü değil! Lütfen 'pip install llama-cpp-python' komutu ile yükleyin veya Mock Mode kullanın.")
+                        st.error("llama-cpp-python bulunamadı. Lütfen kurulumu kontrol edin.")
                         return
-                    if not os.path.exists(model_path) or not os.path.exists(mmproj_path):
-                        st.error(f"Model dosyaları bulunamadı! Lütfen {model_path} ve {mmproj_path} yollarını kontrol edin.")
+                    if not os.path.exists(model_path):
+                        st.error(f"Model dosyası bulunamadı: {model_path}")
                         return
+                    status.update(label="AI Modeli yükleniyor (Bu işlem RAM miktarına göre zaman alabilir)...")
                     engine = AIEngine(model_path, mmproj_path)
 
-                # 2. Analyze Images
-                image_descriptions = []
-                if uploaded_image_paths:
-                    st.write("🖼️ Görseller analiz ediliyor...")
-                    for img_path in uploaded_image_paths:
-                        desc = engine.analyze_image(img_path, "Bu görselde ne var? Sunumda nasıl kullanılabilir? Kısa özetle.")
-                        image_descriptions.append(desc)
-                        st.write(f"✅ {os.path.basename(img_path)} analiz edildi.")
+                # Step 1: Image Analysis
+                img_desc = []
+                if image_paths:
+                    status.update(label="Görseller analiz ediliyor...")
+                    for p in image_paths:
+                        desc = engine.analyze_image(p, "Bu görseli sunum içeriği için kısaca açıkla.")
+                        img_desc.append(desc)
+                        st.write(f"✅ {os.path.basename(p)} analiz edildi.")
 
-                # 3. Generate Structure
-                st.write("📝 Sunum yapısı oluşturuluyor...")
-                structure = engine.generate_presentation_structure(content_text, image_descriptions)
+                # Step 2: Structure Generation
+                status.update(label="Sunum planı oluşturuluyor...")
+                structure = engine.generate_presentation_structure(content_text, img_desc)
 
                 if "error" in structure:
-                    st.error(f"Hata: {structure['error']}")
+                    st.error(f"AI Planlama Hatası: {structure['error']}")
                     return
 
-                # 4. Generate PPTX
-                st.write("📊 PowerPoint dosyası oluşturuluyor...")
-                template_path = os.path.join("templates", "master_template.pptx") if template_file else None
-                generator = PPTGenerator(template_path)
+                # Step 3: PPTX Creation
+                status.update(label="PowerPoint dosyası hazırlanıyor...")
 
-                output_filename = f"sunum_{int(time.time())}.pptx"
-                output_path = os.path.join("output", output_filename)
+                # Handle template
+                t_path = None
+                if template_file:
+                    t_path = os.path.join(TEMPLATE_DIR, "current_template.pptx")
+                    with open(t_path, "wb") as f:
+                        f.write(template_file.getbuffer())
 
-                final_path = generator.create_presentation(structure, uploaded_image_paths, output_path)
+                gen = PPTGenerator(t_path)
+                out_name = f"sunum_{int(time.time())}.pptx"
+                out_path = os.path.join(OUTPUT_DIR, out_name)
 
-                st.session_state.generated_file = final_path
-                status.update(label="✅ Sunum başarıyla oluşturuldu!", state="complete", expanded=False)
+                final_file = gen.create_presentation(structure, image_paths, out_path)
+
+                status.update(label="✅ Sunum hazır!", state="complete", expanded=False)
 
             st.balloons()
+            st.success(f"Başarıyla oluşturuldu: {out_name}")
 
-            # Download Link
-            with open(st.session_state.generated_file, "rb") as f:
+            with open(final_file, "rb") as f:
                 st.download_button(
-                    label="📥 Sunumu İndir (.pptx)",
-                    data=f,
-                    file_name=os.path.basename(st.session_state.generated_file),
+                    "📥 Sunumu İndir",
+                    f,
+                    file_name=out_name,
                     mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
                 )
 
         except Exception as e:
-            st.error(f"Beklenmedik bir hata oluştu: {str(e)}")
-            logger.error(f"General error: {e}", exc_info=True)
+            st.error(f"Kritik Hata: {str(e)}")
+            logger.error(f"App error: {e}", exc_info=True)
 
 if __name__ == "__main__":
-    os.makedirs("templates", exist_ok=True)
-    os.makedirs("uploads", exist_ok=True)
-    os.makedirs("output", exist_ok=True)
-    os.makedirs("logs", exist_ok=True)
     main()
