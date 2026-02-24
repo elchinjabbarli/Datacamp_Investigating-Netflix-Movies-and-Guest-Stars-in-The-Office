@@ -56,5 +56,10 @@ Tarayıcınızda açılan arayüz üzerinden:
 - `output/`: Üretilen sunumların kaydedildiği yer.
 - `logs/`: İşlem loglarının ve prompt geçmişinin tutulduğu yer.
 
+## Sandbox ve Test Ortamları (Bulut)
+Geliştirme ve demo süreçleri için projenin **Google Colab** ve **Firebase Studio** uyumlu sandbox sürümleri mevcuttur.
+*   **⚠️ ÖNEMLİ:** Bulut ortamlarında sadece sahte (dummy) veriler kullanılmalıdır. Kurumsal veri yüklenmemelidir.
+*   Detaylar için `Colab_Instructions.md` ve `Firebase_Setup_Guide.md` dosyalarını inceleyin.
+
 ## Güvenlik ve Gizlilik
-Uygulama herhangi bir bulut API'sine (OpenAI, Gemini vb.) bağlanmaz. Tüm işlemler `llama-cpp-python` aracılığıyla yerel işlemciniz (CPU) üzerinde gerçekleştirilir.
+Üretim (Local) ortamında uygulama herhangi bir bulut API'sine bağlanmaz. Tüm işlemler yerel işlemciniz (CPU) üzerinde gerçekleştirilir.

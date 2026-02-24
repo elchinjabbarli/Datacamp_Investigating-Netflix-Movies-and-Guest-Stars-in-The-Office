@@ -1,0 +1,14 @@
+kind: apphosting.yaml
+version: v1
+runConfig:
+  minInstances: 0
+  maxInstances: 10
+  memory: 4Gi # Default to 4Gi for sandbox
+  cpu: 1
+env:
+  - name: FORCE_FIREBASE
+    value: "1"
+  - name: STREAMLIT_SERVER_PORT
+    value: "8080"
+scripts:
+  run: streamlit run app.py --server.port 8080 --server.address 0.0.0.0

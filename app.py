@@ -13,6 +13,11 @@ try:
 except ImportError:
     AIEngine = None
 
+try:
+    from src.firebase_ai_engine import FirebaseAIEngine
+except ImportError:
+    FirebaseAIEngine = None
+
 # App Configuration
 st.set_page_config(page_title="AI Sunum Hazırlayıcı", layout="wide", page_icon="🚀")
 logger = setup_logger()
@@ -30,17 +35,21 @@ def main():
     st.info("Bu uygulama tamamen çevrimdışı çalışır. Verileriniz cihazınızdan dışarı çıkmaz.")
 
     # Sandbox Warning
-    if Config.IS_COLAB:
-        st.warning("⚠️ SANDBOX MODU: SADECE TEST VERİSİ KULLANIN - KURUMSAL VERİ YÜKLEMEYİN")
+    if Config.IS_COLAB or Config.IS_FIREBASE:
+        st.warning("⚠️ SANDBOX MODU (Bulut): SADECE TEST VERİSİ KULLANIN - KURUMSAL VERİ YÜKLEMEYİN")
 
     # Sidebar - Settings & Hardware
     with st.sidebar:
         st.header("⚙️ Sistem Ayarları")
         mock_mode = st.checkbox("Mock Mode (Model olmadan test)", value=False)
 
-        st.subheader("Modeller")
-        model_path = st.text_input("GGUF Model Yolu", Config.MODEL_PATH)
-        mmproj_path = st.text_input("Vision Projector Yolu", Config.MMPROJ_PATH)
+        if Config.IS_FIREBASE:
+            st.subheader("Firebase / Gemini Ayarları")
+            gemini_key = st.text_input("Gemini API Key", type="password", value=os.environ.get("GEMINI_API_KEY", ""))
+        else:
+            st.subheader("Modeller")
+            model_path = st.text_input("GGUF Model Yolu", Config.MODEL_PATH)
+            mmproj_path = st.text_input("Vision Projector Yolu", Config.MMPROJ_PATH)
 
         st.divider()
         st.write(f"💻 CPU Çekirdek Sayısı: {os.cpu_count()}")
@@ -88,6 +97,12 @@ def main():
                 if mock_mode:
                     status.update(label="Mock Engine kullanılıyor...")
                     engine = MockAIEngine()
+                elif Config.IS_FIREBASE:
+                    status.update(label="Firebase/Gemini Engine yükleniyor...")
+                    if FirebaseAIEngine is None:
+                        st.error("FirebaseAIEngine yüklenemedi. Bağımlılıkları kontrol edin.")
+                        return
+                    engine = FirebaseAIEngine(api_key=gemini_key)
                 else:
                     if AIEngine is None:
                         st.error("llama-cpp-python bulunamadı. Lütfen kurulumu kontrol edin.")
