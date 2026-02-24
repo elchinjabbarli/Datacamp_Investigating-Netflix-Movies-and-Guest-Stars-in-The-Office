@@ -5,6 +5,7 @@ import shutil
 from src.mock_ai_engine import MockAIEngine
 from src.ppt_generator import PPTGenerator
 from src.utils import setup_logger
+from src.config import Config
 
 # Self-Correction: Handle AIEngine import failure (e.g. llama-cpp not installed)
 try:
@@ -16,26 +17,21 @@ except ImportError:
 st.set_page_config(page_title="AI Sunum Hazırlayıcı", layout="wide", page_icon="🚀")
 logger = setup_logger()
 
-# Constants
-UPLOAD_DIR = "uploads"
-OUTPUT_DIR = "output"
-TEMPLATE_DIR = "templates"
-
-def init_folders():
-    for folder in [UPLOAD_DIR, OUTPUT_DIR, TEMPLATE_DIR, "logs"]:
-        os.makedirs(folder, exist_ok=True)
-
 def cleanup_uploads():
     """Self-Correction: Prevent disk bloat by cleaning old uploads."""
-    if os.path.exists(UPLOAD_DIR):
-        shutil.rmtree(UPLOAD_DIR)
-        os.makedirs(UPLOAD_DIR)
+    if os.path.exists(Config.UPLOAD_DIR):
+        shutil.rmtree(Config.UPLOAD_DIR)
+        os.makedirs(Config.UPLOAD_DIR)
 
 def main():
-    init_folders()
+    Config.initialize_env()
 
     st.title("🚀 Yerel AI Sunum Hazırlayıcı")
     st.info("Bu uygulama tamamen çevrimdışı çalışır. Verileriniz cihazınızdan dışarı çıkmaz.")
+
+    # Sandbox Warning
+    if Config.IS_COLAB:
+        st.warning("⚠️ SANDBOX MODU: SADECE TEST VERİSİ KULLANIN - KURUMSAL VERİ YÜKLEMEYİN")
 
     # Sidebar - Settings & Hardware
     with st.sidebar:
@@ -43,8 +39,8 @@ def main():
         mock_mode = st.checkbox("Mock Mode (Model olmadan test)", value=False)
 
         st.subheader("Modeller")
-        model_path = st.text_input("GGUF Model Yolu", "models/phi-3.5-vision-instruct.Q4_K_M.gguf")
-        mmproj_path = st.text_input("Vision Projector Yolu", "models/phi-3.5-vision-instruct-mmproj.bin")
+        model_path = st.text_input("GGUF Model Yolu", Config.MODEL_PATH)
+        mmproj_path = st.text_input("Vision Projector Yolu", Config.MMPROJ_PATH)
 
         st.divider()
         st.write(f"💻 CPU Çekirdek Sayısı: {os.cpu_count()}")
@@ -57,7 +53,7 @@ def main():
 
     with col1:
         st.subheader("1. İçerik ve Şablon")
-        template_file = st.file_uploader("Kurumsal Şablon (.pptx)", type=["pptx"])
+        template_file = st.file_uploader("Şablon (.pptx)", type=["pptx"])
         content_file = st.file_uploader("Metin/Markdown İçeriği (.txt, .md)", type=["txt", "md"])
 
         content_text = ""
@@ -72,7 +68,7 @@ def main():
         image_paths = []
         if image_files:
             for img_file in image_files:
-                path = os.path.join(UPLOAD_DIR, img_file.name)
+                path = os.path.join(Config.UPLOAD_DIR, img_file.name)
                 with open(path, "wb") as f:
                     f.write(img_file.getbuffer())
                 image_paths.append(path)
@@ -125,13 +121,13 @@ def main():
                 # Handle template
                 t_path = None
                 if template_file:
-                    t_path = os.path.join(TEMPLATE_DIR, "current_template.pptx")
+                    t_path = os.path.join(Config.TEMPLATE_DIR, "current_template.pptx")
                     with open(t_path, "wb") as f:
                         f.write(template_file.getbuffer())
 
                 gen = PPTGenerator(t_path)
                 out_name = f"sunum_{int(time.time())}.pptx"
-                out_path = os.path.join(OUTPUT_DIR, out_name)
+                out_path = os.path.join(Config.OUTPUT_DIR, out_name)
 
                 final_file = gen.create_presentation(structure, image_paths, out_path)
 

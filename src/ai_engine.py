@@ -4,6 +4,7 @@ import logging
 import base64
 import gc
 from typing import List, Dict, Any, Optional
+from src.utils import log_interaction
 
 # Self-Correction Note:
 # 1. llama-cpp-python loading can be heavy. We must ensure model paths are verified before instantiation.
@@ -120,7 +121,9 @@ class AIEngine:
                 temperature=0.2 # Daha tutarlı yanıtlar için düşük ısı
             )
 
-            return response["choices"][0]["message"]["content"]
+            content = response["choices"][0]["message"]["content"]
+            log_interaction(prompt, content, metadata={"type": "image_analysis", "image": image_path})
+            return content
         except Exception as e:
             self.logger.error(f"Görsel analiz hatası: {e}")
             return f"Görsel analiz edilemedi: {str(e)}"
@@ -163,6 +166,7 @@ JSON Formatı:
                 response_format={"type": "json_object"}
             )
             content = response["choices"][0]["message"]["content"]
+            log_interaction(prompt, content, metadata={"type": "presentation_planning"})
 
             # Simple cleanup for JSON strings
             if "```" in content:
